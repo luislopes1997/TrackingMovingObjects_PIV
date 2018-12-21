@@ -4,6 +4,8 @@ imgs1=zeros(480,640,length(imgseq1));
 imgsd1=zeros(480,640,length(imgseq1));
 imgs2=zeros(480,640,length(imgseq2));
 imgsd2=zeros(480,640,length(imgseq2));
+objects_cam1=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
+objects_cam2=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
 objects=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
 
     for i=1:length(imgseq1)
@@ -143,16 +145,14 @@ objects=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
     inds=find(sum(error.*error,2)<error_thresh^2);
     xyz_points1=xyz_points1(inds,:);
     xyz_points2=xyz_points2(inds,:);
-    [~,~,trans]=procrustes(xyz_points1,xyz_points2,'scaling',false,'reflection',false); 
-    xyz21=xyz_cam2*trans.T+ones(length(xyz_cam2),1)*trans.c(1,:);
-    xyz_total=[xyz_cam1(:,1) xyz_cam1(:,2) xyz_cam1(:,3); xyz21(:,1) xyz21(:,2) xyz21(:,3)];
     rgbd1=reshape(rgbd_cam1,[640*480 3]);
     rgbd2=reshape(rgbd_cam2,[640*480 3]);
-    rgbd_total=[rgbd1(:,1) rgbd1(:,2) rgbd1(:,3); rgbd2(:,1) rgbd2(:,2) rgbd2(:,3)];
+    [~,~,trans]=procrustes(xyz_points1,xyz_points2,'scaling',false,'reflection',false); 
+    xyz21=xyz_cam2*trans.T+ones(length(xyz_cam2),1)*trans.c(1,:);
     pc1=pointCloud(xyz_cam1,'Color',rgbd1);
     pc2=pointCloud(xyz_cam2,'Color',rgbd2);
     pc3=pointCloud(xyz21,'Color',rgbd2);
-    pc4=pointCloud(xyz_total,'Color',rgbd_total);
+    pc4=pcmerge(pc1,pc3,0.01);
     figure(5);
     subplot(2,2,1);showPointCloud(pc1);    
     subplot(2,2,2);showPointCloud(pc2);
@@ -160,95 +160,131 @@ objects=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
     subplot(2,2,4);showPointCloud(pc4);
     cam2toW=struct('R',trans.T,'T', trans.c(1,:)');
     
-    for i=1:(length(imgseq2))
+    for i=1:(length(imgseq1))
         %BackGround Subtraction
-        load(imgseq1(i).depth);
-        xyz_cam1=get_xyz_asus(depth_array(:),[480 640], 1:480*640, cam_params.Kdepth ,1,0);
-        load(imgseq2(i).depth);
-        xyz_cam2=get_xyz_asus(depth_array(:),[480 640], 1:480*640, cam_params.Kdepth ,1,0);
-        xyz21=xyz_cam2*cam2toW.R+ones(length(xyz_cam2),1)*cam2toW.T';
-        xyz_total=[xyz_cam1(:,1) xyz_cam1(:,2) xyz_cam1(:,3); xyz21(:,1) xyz21(:,2) xyz21(:,3)];
-        im_total(:,:,i)=cam_params.Kdepth*[cam2toW.R cam2toW.T]*[xyz_total' ; ones(1,length(xyz_total))];
-        %figure()
-        imdiff=abs(imgsd2(:,:,i)-bgdepth_cam2)>.2;
-
+        imdiff_cam1=abs(imgsd1(:,:,i)-bgdepth_cam1)>.2;
+        imdiff_cam2=abs(imgsd2(:,:,i)-bgdepth_cam2)>.2;
         % Morfological Filter
-        imgdiffiltered=imopen(imdiff,strel('disk',5));
+        imgdiffiltered_cam1=imopen(imdiff_cam1,strel('disk',5));
+        imgdiffiltered_cam2=imopen(imdiff_cam2,strel('disk',5));
 
-        figure(8);
-        imagesc(imgdiffiltered);
-        value=find(imgdiffiltered==1);
-        grad=zeros(480,640);
-        dept=imgsd2(:,:,i);
-        grad(value)=dept(value);
-
-        figure(9);
-        [FX,FY]=gradient(grad);
-        gradValX=abs(FX);
-        gradValY=abs(FY);
+        figure(6);
         subplot(1,2,1);
-        imagesc(gradValX);
+        imagesc(imgdiffiltered_cam1);
         subplot(1,2,2);
-        imagesc(gradValY);
+        imagesc(imgdiffiltered_cam2);
         
-        img_size = size(imgsd2(:,:,i));
-        [I, J] = ind2sub(img_size(1:2), find(imgdiffiltered == 1));
+        value_cam1=find(imgdiffiltered_cam1==1);
+        value_cam2=find(imgdiffiltered_cam2==1);
+        grad_cam1=zeros(480,640);
+        grad_cam2=zeros(480,640);
+        dept_cam1=imgsd1(:,:,i);
+        dept_cam2=imgsd2(:,:,i);
+        grad_cam1(value_cam1)=dept_cam1(value_cam1);
+        grad_cam2(value_cam2)=dept_cam2(value_cam2);
+
+        figure(7);
+        [FX1,FY1]=gradient(grad_cam1);
+        [FX2,FY2]=gradient(grad_cam2);
+        gradValX1=abs(FX1);gradValY1=abs(FY1);
+        gradValX2=abs(FX2);gradValY2=abs(FY2);
+        subplot(2,2,1);imagesc(gradValX1);
+        subplot(2,2,2);imagesc(gradValX2);
+        subplot(2,2,3);imagesc(gradValY1);
+        subplot(2,2,4);imagesc(gradValY2);
+        
+        img_size = size(imgsd1(:,:,i));
+        [I, J] = ind2sub(img_size(1:2), find(imgdiffiltered_cam1 == 1));
         r = I(I > 1 & I < img_size(1) & J > 1 & J < img_size(2));
         c = J(I > 1 & I < img_size(1) & J > 1 & J < img_size(2));
         indlen = length(r);
+        
         for ind = 1:indlen
-            neigh_v = [gradValX(r(ind)-1,c(ind)-1)
-                       gradValX(r(ind)-1,c(ind))
-                       gradValX(r(ind)-1,c(ind)+1)
-                       gradValX(r(ind),c(ind)-1)
-                       gradValX(r(ind),c(ind)+1)
-                       gradValX(r(ind)+1,c(ind)-1)
-                       gradValX(r(ind)+1,c(ind))
-                       gradValX(r(ind)+1,c(ind)+1)];
-            v = abs(gradValX(r(ind),c(ind)) - neigh_v);
-            neigh_u = [gradValY(r(ind)-1,c(ind)-1)
-                       gradValY(r(ind)-1,c(ind))
-                       gradValY(r(ind)-1,c(ind)+1)
-                       gradValY(r(ind),c(ind)-1)
-                       gradValY(r(ind),c(ind)+1)
-                       gradValY(r(ind)+1,c(ind)-1)
-                       gradValY(r(ind)+1,c(ind))
-                       gradValY(r(ind)+1,c(ind)+1)];
-            u = abs(gradValY(r(ind),c(ind)) - neigh_u);
+            neigh_v = [gradValX1(r(ind)-1,c(ind)-1)
+                       gradValX1(r(ind)-1,c(ind))
+                       gradValX1(r(ind)-1,c(ind)+1)
+                       gradValX1(r(ind),c(ind)-1)
+                       gradValX1(r(ind),c(ind)+1)
+                       gradValX1(r(ind)+1,c(ind)-1)
+                       gradValX1(r(ind)+1,c(ind))
+                       gradValX1(r(ind)+1,c(ind)+1)];
+            v = abs(gradValX1(r(ind),c(ind)) - neigh_v);
+            neigh_u = [gradValY1(r(ind)-1,c(ind)-1)
+                       gradValY1(r(ind)-1,c(ind))
+                       gradValY1(r(ind)-1,c(ind)+1)
+                       gradValY1(r(ind),c(ind)-1)
+                       gradValY1(r(ind),c(ind)+1)
+                       gradValY1(r(ind)+1,c(ind)-1)
+                       gradValY1(r(ind)+1,c(ind))
+                       gradValY1(r(ind)+1,c(ind)+1)];
+            u = abs(gradValY1(r(ind),c(ind)) - neigh_u);
 
             if(~isempty(find(v > 0.2)>0) || ~isempty(find(u > 0.2)>0))
-                imgdiffiltered(r(ind),c(ind)) = 0;
+                imgdiffiltered_cam1(r(ind),c(ind)) = 0;
+            end
+        end
+        img_size = size(imgsd2(:,:,i));
+        [I, J] = ind2sub(img_size(1:2), find(imgdiffiltered_cam2 == 1));
+        r = I(I > 1 & I < img_size(1) & J > 1 & J < img_size(2));
+        c = J(I > 1 & I < img_size(1) & J > 1 & J < img_size(2));
+        indlen = length(r);
+        
+        for ind = 1:indlen
+            neigh_v = [gradValX2(r(ind)-1,c(ind)-1)
+                       gradValX2(r(ind)-1,c(ind))
+                       gradValX2(r(ind)-1,c(ind)+1)
+                       gradValX2(r(ind),c(ind)-1)
+                       gradValX2(r(ind),c(ind)+1)
+                       gradValX2(r(ind)+1,c(ind)-1)
+                       gradValX2(r(ind)+1,c(ind))
+                       gradValX2(r(ind)+1,c(ind)+1)];
+            v = abs(gradValX2(r(ind),c(ind)) - neigh_v);
+            neigh_u = [gradValY2(r(ind)-1,c(ind)-1)
+                       gradValY2(r(ind)-1,c(ind))
+                       gradValY2(r(ind)-1,c(ind)+1)
+                       gradValY2(r(ind),c(ind)-1)
+                       gradValY2(r(ind),c(ind)+1)
+                       gradValY2(r(ind)+1,c(ind)-1)
+                       gradValY2(r(ind)+1,c(ind))
+                       gradValY2(r(ind)+1,c(ind)+1)];
+            u = abs(gradValY2(r(ind),c(ind)) - neigh_u);
+
+            if(~isempty(find(v > 0.2)>0) || ~isempty(find(u > 0.2)>0))
+                imgdiffiltered_cam2(r(ind),c(ind)) = 0;
             end
         end
 
-        figure(10);
-        imagesc(imgdiffiltered);
+        figure(8);
+        subplot(1,2,1);imagesc(imgdiffiltered_cam1);
+        subplot(1,2,2);imagesc(imgdiffiltered_cam2);       
 
-        bw2=bwareaopen(imgdiffiltered,1000);
+        bw2_cam1=bwareaopen(imgdiffiltered_cam1,1250);
+        bw2_cam2=bwareaopen(imgdiffiltered_cam2,1250);
 
-        [bw3,M]=bwlabel(bw2);
-        figure(11);
-        imagesc(bw3);
-
+        [bw31,M1]=bwlabel(bw2_cam1);
+        [bw32,M2]=bwlabel(bw2_cam2);
+        figure(9);
+        subplot(1,2,1);imagesc(bw31);
+        subplot(1,2,2);imagesc(bw32);
         
-        figure(12);
+        figure(10);
         clf;
-        for j=1:M        
-            ind=find(bw3==j);
-            load(imgseq2(i).depth);
+        for j=1:M1        
+            ind=find(bw31==j);
+            load(imgseq1(i).depth);
             aux=zeros(480,640);
             aux(ind)=depth_array(ind);
-            xyz_cam2=get_xyz_asus(aux(:),[480 640], find(aux>0.2 & aux<6000), cam_params.Kdepth,1,0);
-            pc1=pointCloud(xyz_cam2);  
+            xyz_cam1=get_xyz_asus(aux(:),[480 640], find(aux>0.2 & aux<6000), cam_params.Kdepth,1,0);
+            pc1=pointCloud(xyz_cam1);  
             showPointCloud(pc1);
-
+            
             Z=pc1.Location(:,3);
-            zmax=max(Z)
+            zmax=max(Z);
             zmin=min(Z(Z~=0));
 
             Y=pc1.Location(:,2);
-            ymax=max(Y)
-            ymin=min(Y(Y~=0))
+            ymax=max(Y);
+            ymin=min(Y(Y~=0));
 
             X=pc1.Location(:,1);
             xmax=max(X(X~=0));
@@ -256,8 +292,7 @@ objects=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
             
             if zmax==0
                continue; 
-            end
-            
+            end      
             
             % draw box
             X = [xmin;xmin;xmin;xmin;xmin];
@@ -282,41 +317,194 @@ objects=struct('X', [], 'Y', [], 'Z', [],'frames_tracked',[]);
             % tracking
             centroid=[xmax-((xmax-xmin)/2), ymax-((ymax-ymin)/2), zmax-((zmax-zmin)/2)];
             
-            if (isempty(objects(1).X)==1)
-                objects(1).X=[xmin xmin xmin xmin xmax xmax xmax xmax];
-                objects(1).Y=[ymin ymin ymax ymax ymin ymin ymax ymax];
-                objects(1).Z=[zmin zmax zmin zmax zmin zmax zmin zmax];
-                objects(1).frames_tracked=[i];
+            if (isempty(objects_cam1(1).X)==1)
+                objects_cam1(1).X=[xmin xmin xmin xmin xmax xmax xmax xmax];
+                objects_cam1(1).Y=[ymin ymin ymax ymax ymin ymin ymax ymax];
+                objects_cam1(1).Z=[zmin zmax zmin zmax zmin zmax zmin zmax];
+                objects_cam1(1).frames_tracked=[i];
             else 
                 n=0;
-                for k = 1:length(objects)
-                    if objects(k).frames_tracked(end)~=i-1
+                for k = 1:length(objects_cam1)
+                    if objects_cam1(k).frames_tracked(end)~=i-1
                         continue;
                     end
-                    cent = [max(objects(k).X(end,:))-((max(objects(k).X(end,:))-min(objects(k).X(end,:)))/2), max(objects(k).Y(end,:))-((max(objects(k).Y(end,:))-min(objects(k).Y(end,:)))/2), max(objects(k).Z(end,:))-((max(objects(k).Z(end,:))-min(objects(k).Z(end,:)))/2)];
+                    cent = [max(objects_cam1(k).X(end,:))-((max(objects_cam1(k).X(end,:))-min(objects_cam1(k).X(end,:)))/2), max(objects_cam1(k).Y(end,:))-((max(objects_cam1(k).Y(end,:))-min(objects_cam1(k).Y(end,:)))/2), max(objects_cam1(k).Z(end,:))-((max(objects_cam1(k).Z(end,:))-min(objects_cam1(k).Z(end,:)))/2)];
                     dist=norm(centroid-cent);
                     if dist < 1.8
-                        objects(k).X=vertcat(objects(k).X, [xmin xmin xmin xmin xmax xmax xmax xmax]);
-                        objects(k).Y=vertcat(objects(k).Y, [ymin ymin ymax ymax ymin ymin ymax ymax]);
-                        objects(k).Z=vertcat(objects(k).Z, [zmin zmax zmin zmax zmin zmax zmin zmax]);
-                        objects(k).frames_tracked=horzcat(objects(k).frames_tracked, i);
+                        objects_cam1(k).X=vertcat(objects_cam1(k).X, [xmin xmin xmin xmin xmax xmax xmax xmax]);
+                        objects_cam1(k).Y=vertcat(objects_cam1(k).Y, [ymin ymin ymax ymax ymin ymin ymax ymax]);
+                        objects_cam1(k).Z=vertcat(objects_cam1(k).Z, [zmin zmax zmin zmax zmin zmax zmin zmax]);
+                        objects_cam1(k).frames_tracked=horzcat(objects_cam1(k).frames_tracked, i);
                         n=1;
                     end
                       
                 end 
                 if n==0
-                    im=length(objects)+1;
-                    objects(im).X=[xmin xmin xmin xmin xmax xmax xmax xmax];
-                    objects(im).Y=[ymin ymin ymax ymax ymin ymin ymax ymax];
-                    objects(im).Z=[zmin zmax zmin zmax zmin zmax zmin zmax];
-                    objects(im).frames_tracked=i;
+                    im=length(objects_cam1)+1;
+                    objects_cam1(im).X=[xmin xmin xmin xmin xmax xmax xmax xmax];
+                    objects_cam1(im).Y=[ymin ymin ymax ymax ymin ymin ymax ymax];
+                    objects_cam1(im).Z=[zmin zmax zmin zmax zmin zmax zmin zmax];
+                    objects_cam1(im).frames_tracked=i;
                 end
  
             end                                                                     
                       
-        end   
-         
+        end
+        figure(11);
+        clf;
+          for j=1:M2        
+            ind=find(bw32==j);
+            load(imgseq2(i).depth);
+            aux=zeros(480,640);
+            aux(ind)=depth_array(ind);
+            xyz_cam2=get_xyz_asus(aux(:),[480 640], find(aux>0.2 & aux<6000), cam_params.Kdepth,1,0);
+            pc1=pointCloud(xyz_cam2);  
+            showPointCloud(pc1);
+            
+            Z=pc1.Location(:,3);
+            zmax=max(Z);
+            zmin=min(Z(Z~=0));
+
+            Y=pc1.Location(:,2);
+            ymax=max(Y);
+            ymin=min(Y(Y~=0));
+
+            X=pc1.Location(:,1);
+            xmax=max(X(X~=0));
+            xmin=min(X);
+            
+            if zmax==0
+               continue; 
+            end      
+            
+            % draw box
+            X = [xmin;xmin;xmin;xmin;xmin];
+            Y = [ymin;ymin;ymax;ymax;ymin];
+            Z = [zmin;zmax;zmax;zmin;zmin];
+            hold on;
+            plot3(X,Y,Z,'r');   
+            X = [xmax;xmax;xmax;xmax;xmax];
+            hold on;
+            plot3(X,Y,Z,'r'); 
+    
+            Z = [zmin;zmin;zmin;zmin;zmin];
+            X = [xmin;xmin;xmax;xmax;xmin];
+            Y = [ymin;ymax;ymax;ymin;ymin];
+            hold on;
+            plot3(X,Y,Z,'r');   
+            Z = [zmax;zmax;zmax;zmax;zmax];
+            hold on;
+            plot3(X,Y,Z,'r'); 
+            pause(0.1);
+           
+            % tracking
+            centroid=[xmax-((xmax-xmin)/2), ymax-((ymax-ymin)/2), zmax-((zmax-zmin)/2)];
+            
+            if (isempty(objects_cam2(1).X)==1)
+                objects_cam2(1).X=[xmin xmin xmin xmin xmax xmax xmax xmax];
+                objects_cam2(1).Y=[ymin ymin ymax ymax ymin ymin ymax ymax];
+                objects_cam2(1).Z=[zmin zmax zmin zmax zmin zmax zmin zmax];
+                objects_cam2(1).frames_tracked=[i];
+            else 
+                n=0;
+                for k = 1:length(objects_cam2)
+                    if objects_cam2(k).frames_tracked(end)~=i-1
+                        continue;
+                    end
+                    cent = [max(objects_cam2(k).X(end,:))-((max(objects_cam2(k).X(end,:))-min(objects_cam2(k).X(end,:)))/2), max(objects_cam2(k).Y(end,:))-((max(objects_cam2(k).Y(end,:))-min(objects_cam2(k).Y(end,:)))/2), max(objects_cam2(k).Z(end,:))-((max(objects_cam2(k).Z(end,:))-min(objects_cam2(k).Z(end,:)))/2)];
+                    dist=norm(centroid-cent);
+                    if dist < 1.8
+                        objects_cam2(k).X=vertcat(objects_cam2(k).X, [xmin xmin xmin xmin xmax xmax xmax xmax]);
+                        objects_cam2(k).Y=vertcat(objects_cam2(k).Y, [ymin ymin ymax ymax ymin ymin ymax ymax]);
+                        objects_cam2(k).Z=vertcat(objects_cam2(k).Z, [zmin zmax zmin zmax zmin zmax zmin zmax]);
+                        objects_cam2(k).frames_tracked=horzcat(objects_cam2(k).frames_tracked, i);
+                        n=1;
+                    end
+                      
+                end 
+                if n==0
+                    im=length(objects_cam2)+1;
+                    objects_cam2(im).X=[xmin xmin xmin xmin xmax xmax xmax xmax];
+                    objects_cam2(im).Y=[ymin ymin ymax ymax ymin ymin ymax ymax];
+                    objects_cam2(im).Z=[zmin zmax zmin zmax zmin zmax zmin zmax];
+                    objects_cam2(im).frames_tracked=i;
+                end
+ 
+            end                                                                     
+                      
+        end
     end
-   
+    for i=1:length(objects_cam2)
+        aux1=zeros(length(objects_cam2(i).X(:)),3);
+        aux1(:,1)=objects_cam2(i).X(:);
+        aux1(:,2)=objects_cam2(i).Y(:);
+        aux1(:,3)=objects_cam2(i).Z(:);
+        aux21=aux1*cam2toW.R+ones(length(aux1),1)*cam2toW.T';
+        objects_cam2(i).X=reshape(aux21(:,1),length(aux21)/8,8);
+        objects_cam2(i).Y=reshape(aux21(:,2),length(aux21)/8,8);
+        objects_cam2(i).Z=reshape(aux21(:,3),length(aux21)/8,8);
+        
+    end
+    
+    o1 = objects_cam1;
+    o2 = objects_cam2;
+    c=1;
+   for i=1:length(objects_cam1)
+      next1=0;
+      for f1=1:length(objects_cam1(i).frames_tracked)
+          for j=1:length(objects_cam2)
+              match = 0;
+             for f2=1:length(objects_cam2(j).frames_tracked)
+                 if objects_cam1(i).frames_tracked(f1)==objects_cam2(j).frames_tracked(f2)
+                     cent1 = [max(objects_cam1(i).X(f1,:))-((max(objects_cam1(i).X(f1,:))-min(objects_cam1(i).X(f1,:)))/2), max(objects_cam1(i).Y(f1,:))-((max(objects_cam1(i).Y(f1,:))-min(objects_cam1(i).Y(f1,:)))/2), max(objects_cam1(i).Z(f1,:))-((max(objects_cam1(i).Z(f1,:))-min(objects_cam1(i).Z(f1,:)))/2)];
+                     cent2 = [max(objects_cam2(j).X(f2,:))-((max(objects_cam2(j).X(f2,:))-min(objects_cam2(j).X(f2,:)))/2), max(objects_cam2(j).Y(f2,:))-((max(objects_cam2(j).Y(f2,:))-min(objects_cam2(j).Y(f2,:)))/2), max(objects_cam2(j).Z(f2,:))-((max(objects_cam2(j).Z(f2,:))-min(objects_cam2(j).Z(f2,:)))/2)];
+                    if norm(cent1-cent2)<0.3
+                        frames=horzcat(objects_cam1(i).frames_tracked,objects_cam2(j).frames_tracked);
+                        xx=vertzcat(objects_cam1(i).X,objects_cam2(j).X);
+                        yy=vertzcat(objects_cam1(i).Y,objects_cam2(j).Y);
+                        zz=vertzcat(objects_cam1(i).Z,objects_cam2(j).Z);
+                        [uniq, indexs]=unique(frames);
+                        objects(c).frames_tracked=uniq;
+                        objects(c).X=xx(indexs,:);
+                        objects(c).Y=yy(indexs,:);
+                        objects(c).Z=zz(indexs,:);
+                        objects_cam1(i)=[];
+                        objects_cam2(j)=[];
+                        c=c+1;
+                        match = 1;
+                        next1=1;
+                        break;
+                    end
+                 end
+             end
+             if match == 1
+                 break;
+             end
+          end
+          if match == 0
+              objects(c).frames_tracked=objects_cam1(i).frames_tracked;
+              objects(c).X=objects_cam1(i).X;
+              objects(c).Y=objects_cam1(i).Y;
+              objects(c).Z=objects_cam1(i).Z;
+              objects_cam1(i)=[];
+              c=c+1;
+          end
+          if next1 == 1
+              break;
+          end
+      end
+   end
+  if ~isempty(objects_cam2)
+      for j=1:length(objects_cam2)
+          objects(c).frames_tracked=objects_cam2(j).frames_tracked;
+          objects(c).X=objects_cam2(j).X;
+          objects(c).Y=objects_cam2(j).Y;
+          objects(c).Z=objects_cam2(j).Z;
+          objects_cam2(j)=[];
+          c=c+1;
+      end
+  end
+  
+  
 end
    
