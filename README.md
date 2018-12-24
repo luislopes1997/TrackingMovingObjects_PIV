@@ -15,7 +15,9 @@ Work developed for the Image Processing and Vision course from Instituto Superio
   
 # Notes 
  For part 1 use the files in the `images1` or `images4` folders. Only change the name of the folder on the top of the file `part1_test`.
- For part 2 use the files in the `images2` or `images3`**(never tested)** folders. Pay attencion to change the name of the folder in the top of the file `part2_test`.
+ For part 2 use the files in the `images2` or `images3`**(never tested)** folders. Pay attencion to change the name of the folder in the top of the file `part2_test`. 
+ 
+ VLFeat library is required: [VLFeat library](http://www.vlfeat.org/)
   
 # Done by:
   - Luís Lopes
